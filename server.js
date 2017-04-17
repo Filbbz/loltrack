@@ -6,9 +6,12 @@ const sqlite3 = require('sqlite3').verbose();
 const hostname = '127.0.0.1';
 const port = 3000;
 
-var activeSummonerID = 21462663; //!!assigned !!on log in
 var staticChampInfo; //assigned on app start
 
+//user-specific globals, assigned on log in
+var activeSummonerID;
+var activeUserName;
+var activeStats = [];
 
 //Server Set Up
 ///////////////////////////////////////////////////////////////////////////////////
@@ -39,10 +42,10 @@ function route(request, response) {
 	} else if (request.url.includes('/user/redir/')) {
 		userLogInRoute(request, response);
 
-	} else if (request.url.includes('/user/champions/')) {
+	} else if (request.url.includes('/user/' + activeUserName + '/champions')) {
 		userChampionsRoute(request, response);
 
-	} else if (request.url.includes('/user/history/')) {
+	} else if (request.url.includes('/user/' + activeUserName + '/history')) {
 		userHistoryRoute(request, response);
 
 	} else {
@@ -72,9 +75,10 @@ function userLogInRoute(request, response) {
 	    response.writeHead(200, {'Content-Type': 'text/html'});
 	    response.write(data);
 
+	    //starts a chain of callbacks to complete the "log in" process
 	    getSummonerID(userInput, function(summonerName){ //success callback
+	    	activeUserName = userInput;
 	    	response.write('Hi ' + summonerName + ". You're logged in or something");
-	    	mostPlayed();
 	    	response.end(console.log(summonerName + "'s page has been written"));
 
 	    }, function() { //error callback
@@ -87,13 +91,14 @@ function userLogInRoute(request, response) {
 //Champions page
 //(http, http)
 function userChampionsRoute(request, response) {
-	response.write('most played champ');
-	response.write('# of games on said champ');
-	response.write('win%');
+	response.writeHead(200, {'Content-Type': 'text/html'});
+	response.write('most played champ: ' + sortSums(activeStats, 'champID')[0].value + '<br>');
+	response.write('# of games on said champ: ' + sortSums(activeStats, 'champID')[0].sum + '<br>');
+	response.write('win%: ');
 	response.end(console.log('champions page has been written'));
 };
 
-//Match History page
+//Match history page
 //(http, http)
 function userHistoryRoute(request, response) {
 	response.end(console.log('history: under construction'));
@@ -121,44 +126,9 @@ function jsRoute(request, response) {
 //Contacting Rito
 //////////////////////////////////////////////////////////////////////////////////////
 
-//(string, function(string), function)
-function getSummonerID(enteredName, callback, errorCallback) { //called first on log in
-    requestModule.get('https://na.api.pvp.net/api/lol/na/v1.4/summoner/by-name/' + enteredName + '?api_key=RGAPI-2195a578-54d6-408b-bbef-c7a173bbe105',
-    function (err, response, body) {
-        console.log("Riot's statusCode for getSummonerID request:", response && response.statusCode); // Print the response status code if a response was received
-        if (response.statusCode != 200) {
-            console.log('error:', err); //not a 'real' error checker
-            errorCallback();
-            return; }
-        else {
-	        const allSummonerInfo = JSON.parse(body); //turns JSON text into object
-	        const summonerID = allSummonerInfo[enteredName].id; //extracts the parameter we need
-	        const displayName = allSummonerInfo[enteredName].name; //this is the summonerName correctly stylized
-	        console.log('ID ' + summonerID + ' received');
-	        callback(displayName);
-	        getMatchHistory(summonerID);
-    	}	
-    });
-};
-
-//(int)
-function getMatchHistory(id) { //called second on log in
-	requestModule.get('https://na.api.pvp.net/api/lol/na/v1.3/game/by-summoner/' + id + '/recent?api_key=RGAPI-2195a578-54d6-408b-bbef-c7a173bbe105',
-    function (err, response, body) {
-        console.log("Riot's statusCode for getMatchHistory request:", response && response.statusCode); // Print the response status code if a response was received
-        if (response.statusCode != 200) {
-            console.log('error:', err); //not a 'real' error checker
-            errorCallback();
-            return; }
-        else {
-        	const rawMatchData = JSON.parse(body);
-        	saveMatchHistory(rawMatchData);
-    	}	
-    });
-};
-
+//called on app start
 //()
-function getStaticChampInfo() { //called on app start
+function getStaticChampInfo() {
 	requestModule.get('https://na.api.pvp.net/api/lol/static-data/na/v1.2/champion?api_key=RGAPI-2195a578-54d6-408b-bbef-c7a173bbe105',
 	function (err, response, body) {
        console.log("Riot's statusCode for second getStaticChampInfo request:", response && response.statusCode); // Print the response status code if a response was received
@@ -171,10 +141,52 @@ function getStaticChampInfo() { //called on app start
     });
 };
 
+//log in order: 1
+//(string, function(string), function)
+function getSummonerID(enteredName, callback, errorCallback) {
+    requestModule.get('https://na.api.pvp.net/api/lol/na/v1.4/summoner/by-name/' + enteredName + '?api_key=RGAPI-2195a578-54d6-408b-bbef-c7a173bbe105',
+    function (err, response, body) {
+        console.log("Riot's statusCode for getSummonerID request:", response && response.statusCode); // Print the response status code if a response was received
+        if (response.statusCode != 200) {
+            console.log('error:', err); //not a 'real' error checker
+            errorCallback();
+            return; }
+        else {
+	        const allSummonerInfo = JSON.parse(body); //turns JSON text into object
+	        activeSummonerID = allSummonerInfo[enteredName].id; //extracts the parameter we need
+	        const displayName = allSummonerInfo[enteredName].name; //this is the summonerName correctly stylized
+	        console.log('ID ' + activeSummonerID + ' received');
+	        callback(displayName);
+	        getMatchHistory(activeSummonerID);
+    	}	
+    });
+};
+
+//log in order: 2
+//(int)
+function getMatchHistory(id) { //called second on log in
+	requestModule.get('https://na.api.pvp.net/api/lol/na/v1.3/game/by-summoner/' + id + '/recent?api_key=RGAPI-2195a578-54d6-408b-bbef-c7a173bbe105',
+    function (err, response, body) {
+        console.log("Riot's statusCode for getMatchHistory request:", response && response.statusCode); // Print the response status code if a response was received
+        if (response.statusCode != 200) {
+            console.log('error:', err); //not a 'real' error checker
+            errorCallback();
+            return; }
+        else {
+        	const rawMatchData = JSON.parse(body);
+        	saveAllData(rawMatchData, retrieveAllData);
+    	}	
+    });
+};
+
+
+
 //Databass
 /////////////////////////////////////////////////////////////////////////////////////////
-//(JSON object)
-function saveMatchHistory(jason) { //called third on log in
+
+//log in order: 3
+//(JSON object, function())
+function saveAllData(jason, callback) {
 
 	//massaging the data- separating ally and enemy champions
 	for (i in jason.games) {
@@ -237,23 +249,122 @@ function saveMatchHistory(jason) { //called third on log in
 			}
 		});
     }
+
+    callback();
 };
 
-//returns an array of sorted objects, each of which contains champ id, champ name, # of games played, # of wins, # of losses, win%
-//(??)
-function mostPlayed() {
+//log in order: 4
+//()
+function retrieveAllData() {
 
-	var statsArray = [];
+	//object representation a db row
+	function DataRow(summonerID, gameID, champID
+	, gameMode, gameType, subType, mapID, result
+	, date, kills, deaths, assists, allies, enemies) {
+
+		this.summonerID = summonerID;
+		this.gameID = gameID;
+		this.champID = champID;
+		this.gameMode = gameMode;
+		this.gameType = gameType;
+		this.subType = subType;
+		this.mapID = mapID;
+		this.result = result;
+		this.date = date;
+		this.kills = kills;
+		this.deaths = deaths;
+		this.assists = assists;
+		this.allies = allies;
+		this.enemies = enemies;
+	};
 
 	var db = new sqlite3.Database('db/everything.db', function() {
 	  console.log('db opened');
 	});
 
-	
+	//feeds globle variable activeStats
+	db.each('SELECT * FROM matchData WHERE summonerID = ?', activeSummonerID, function (err, row) {
 
-	//create object using staticChampInfo that has champ name, champ ID, and games logged
-	//get every champion ID from db for a given player
-	//for every instance of a champ ID from db, increase value of games logged
-	//sort the object by games logged per champ
-	//return the object
+		let myRow = new DataRow (row.summonerID, row.gameID, row.champID, row.gameMode, row.gameType, row.subType
+		, row.mapID, row.result, row.date, row.kills, row.deaths, row.assists, row.allies, row.enemies);
+
+		activeStats.push(myRow);
+
+	}, function () {
+		//console.log(activeSummonerID + "'s data: " + JSON.stringify(activeStats));
+	});
+};
+
+
+//Fun With Functions
+/////////////////////////////////////////////////////////////////////////////////////////
+
+//!!convert champID to name
+
+//takes a list of objects and sums up instances of a specified property.value of those objects
+//([object], string, value) -> int
+function sumColumn(stats, property, value) {
+
+	var total = 0;
+	var i = 0;
+
+	while (i < stats.length) {
+		if (stats[i][property] === value) {
+			total++;
+			i++;
+		}
+		else {
+			i++;
+		}
+	}
+	return total.toString();
+};
+
+//for every instance of a value, find its total number of occurences, then sort those values by their occorunces
+//returns a sorted array of objects. Each object contains a value and sum. They are sorted by sum
+//([object], string) -> [object] 
+function sortSums(stats, property) {
+	var uniqueValues = []; //ex. will contain [61, 35, 47]
+	var sortMeBySum = []; //ex. will contain [{value: 61, sum: 20}, {value: 35, sum: 25}, {value: 47, sum: 1}]
+
+
+	function ValueAndSum (value, sum) {
+		this.value = value;
+		this.sum = sum;
+	}
+
+	var i = 0;
+	var j = 0;
+
+	//get array full of unique values
+	while (i < stats.length) {
+		if (uniqueValues.includes(stats[i][property]) === false) {
+			uniqueValues.push(stats[i][property]);
+			i++;
+		}
+		else {
+			i++;
+		}
+	}
+
+	//gets sum for every value
+	while (j < uniqueValues.length) {
+		let myObj = new ValueAndSum(uniqueValues[j], sumColumn(stats, property, uniqueValues[j]));
+		sortMeBySum.push(myObj);
+		j++;
+	}
+
+	function reverseSortObjectBySum(a,b) {
+		return b.sum - a.sum;
+	};
+	
+    return sortMeBySum.sort(reverseSortObjectBySum);
+};
+
+//([object], int) -> float
+function winPercent(stats, champID) {
+	var totalWins;
+	var totalLosses
+
+	return(totalWins/totalLosses);
 };
