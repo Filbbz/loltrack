@@ -92,9 +92,9 @@ function userLogInRoute(request, response) {
 //(http, http)
 function userChampionsRoute(request, response) {
 	response.writeHead(200, {'Content-Type': 'text/html'});
-	response.write('most played champ: ' + sortSums(activeStats, 'champID')[0].value + '<br>');
-	response.write('# of games on said champ: ' + sortSums(activeStats, 'champID')[0].sum + '<br>');
-	response.write('win%: ');
+	response.write('most played champ: ' + convertFromChampID(sortSums(activeStats, 'champID')[0].value) + '<br>');
+	response.write('# of games logged on said champ: ' + sortSums(activeStats, 'champID')[0].sum + '<br>');
+	response.write('win%: ' + calculateWinRate(activeStats, sortSums(activeStats, 'champID')[0].value));
 	response.end(console.log('champions page has been written'));
 };
 
@@ -257,6 +257,8 @@ function saveAllData(jason, callback) {
 //()
 function retrieveAllData() {
 
+	activeStats = []; //necessary to reset active stats when switching users
+
 	//object representation a db row
 	function DataRow(summonerID, gameID, champID
 	, gameMode, gameType, subType, mapID, result
@@ -300,10 +302,20 @@ function retrieveAllData() {
 /////////////////////////////////////////////////////////////////////////////////////////
 
 //!!convert champID to name
+//(int) -> string
+function convertFromChampID(champID) {
+
+	for (i in staticChampInfo.data) {
+		if (staticChampInfo.data[i].id === champID) {
+			return staticChampInfo.data[i].name;
+		}
+	}
+
+}
 
 //takes a list of objects and sums up instances of a specified property.value of those objects
-//([object], string, value) -> int
-function sumColumn(stats, property, value) {
+//([object], property, value) -> int
+function count(stats, property, value) {
 
 	var total = 0;
 	var i = 0;
@@ -311,13 +323,40 @@ function sumColumn(stats, property, value) {
 	while (i < stats.length) {
 		if (stats[i][property] === value) {
 			total++;
-			i++;
 		}
-		else {
-			i++;
-		}
+		i++;
 	}
+
 	return total.toString();
+};
+
+//returns total for filtered results, ie (activeStats, ['champID', 'result'],[61, 1]) returns
+//count of objects with champID 61 && result 1
+//([object], [properties], [values]) -> int
+function filterCount (stats, properties, values) {
+	var total = 0;
+	var i = 0;
+	var j = 0;
+	var subTotal = 0;
+
+	while (i < stats.length) {
+		j = 0;
+		subTotal = 0;
+
+		while (j < properties.length) {
+			if (stats[i][properties[j]] === values[j]) {
+				subTotal++;
+				//console.log('a property matches- increasing subTotal to ' + subTotal);
+			}
+			if (subTotal === properties.length) {
+				//console.log('all properties match- increasing total');
+				total++;
+			}
+			j++;
+		}
+		i++;
+	}
+	return total;
 };
 
 //for every instance of a value, find its total number of occurences, then sort those values by their occorunces
@@ -349,7 +388,7 @@ function sortSums(stats, property) {
 
 	//gets sum for every value
 	while (j < uniqueValues.length) {
-		let myObj = new ValueAndSum(uniqueValues[j], sumColumn(stats, property, uniqueValues[j]));
+		let myObj = new ValueAndSum(uniqueValues[j], count(stats, property, uniqueValues[j]));
 		sortMeBySum.push(myObj);
 		j++;
 	}
@@ -362,9 +401,11 @@ function sortSums(stats, property) {
 };
 
 //([object], int) -> float
-function winPercent(stats, champID) {
-	var totalWins;
-	var totalLosses
+function calculateWinRate(stats, champID) {
+	
+	var totalWins = filterCount(stats, ['champID', 'result'], [champID, '1']);
+	var totalLosses = filterCount(stats, ['champID', 'result'], [champID, '0']);
 
-	return(totalWins/totalLosses);
+	console.log('wins: ' + totalWins + ' losses: ' + totalLosses);
+	return (totalWins/ (totalLosses + totalWins) * 100);
 };
